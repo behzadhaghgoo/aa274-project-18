@@ -90,7 +90,7 @@ class MarkerPublisher:
 
 			#See if we already have an object with this name recorded. If not, add it to NavDict
 			marker_name = message.name
-			if marker_name in self.NavDict:
+			if marker_name in not self.NavDict:
 				 #Add object to our NavDict
             	self.NavDict[message.name] = (x,y,theta,message.confidence)
 
