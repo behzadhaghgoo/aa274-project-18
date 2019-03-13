@@ -7,6 +7,7 @@ from geometry_msgs.msg import Twist, PoseArray, Pose2D, PoseStamped
 from asl_turtlebot.msg import DetectedObject
 import tf
 import math
+from utils import wrapToPi
 from enum import Enum
 
 # if sim is True/using gazebo, therefore want to subscribe to /gazebo/model_states\
@@ -19,7 +20,7 @@ mapping = rospy.get_param("map")
 
 # threshold at which we consider the robot at a location
 POS_EPS = .1
-THETA_EPS = .3
+THETA_EPS = 1
 
 # time to stop at a stop sign
 STOP_TIME = 3
@@ -39,17 +40,22 @@ class Mode(Enum):
     NAV = 5
     MANUAL = 6
 
+    IDLE_PROJ = 7
+    POSE_PROJ  = 8
+    NAV_PROJ = 9
+
+
 
 print "supervisor settings:\n"
 print "use_gazebo = %s\n" % use_gazebo
 print "mapping = %s\n" % mapping
 
 class Supervisor:
-
     def __init__(self):
         rospy.init_node('turtlebot_supervisor', anonymous=True)
         # initialize variables
         self.x = 0
+        self.glist = []
         self.y = 0
         self.theta = 0
         self.mode = Mode.IDLE
@@ -61,12 +67,13 @@ class Supervisor:
         self.nav_goal_publisher = rospy.Publisher('/cmd_nav', Pose2D, queue_size=10)
         # command vel (used for idling)
         self.cmd_vel_publisher = rospy.Publisher('/cmd_vel', Twist, queue_size=10)
-
         # subscribers
         # stop sign detector
         rospy.Subscriber('/detector/stop_sign', DetectedObject, self.stop_sign_detected_callback)
+        # delivery subscriber
+        rospy.Subscriber('/NavRequest', Pose2D, self.delivery_callback)
         # high-level navigation pose
-        rospy.Subscriber('/nav_pose', Pose2D, self.nav_pose_callback)
+        rospy.Subscriber('/nav_pose', Pose2D, self.Pose2D_callback)
         # if using gazebo, we have access to perfect state
         if use_gazebo:
             rospy.Subscriber('/gazebo/model_states', ModelStates, self.gazebo_callback)
@@ -85,11 +92,14 @@ class Supervisor:
                     pose.orientation.w)
         euler = tf.transformations.euler_from_quaternion(quaternion)
         self.theta = euler[2]
+        #self.theta = wrapToPi(self.theta)
+
 
     def rviz_goal_callback(self, msg):
         """ callback for a pose goal sent through rviz """
         origin_frame = "/map" if mapping else "/odom"
         print("rviz command received!")
+
         try:
             
             nav_pose_origin = self.trans_listener.transformPose(origin_frame, msg)
@@ -102,15 +112,34 @@ class Supervisor:
                     nav_pose_origin.pose.orientation.w)
             euler = tf.transformations.euler_from_quaternion(quaternion)
             self.theta_g = euler[2]
+            #self.theta_g = wrapToPi(self.theta_g)
         except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException):
             pass
-        self.mode = Mode.NAV
+        self.mode = Mode.POSE
+	rospy.loginfo("Current Mode: %s", self.mode)
 
     def nav_pose_callback(self, msg):
         self.x_g = msg.x
         self.y_g = msg.y
         self.theta_g = msg.theta
+        #self.theta_g = wrapToPi(self.theta_g)
         self.mode = Mode.NAV
+    def delivery_callback(self, msg):
+        print(len(self.glist))
+        if len(self.glist) > 0:
+            if self.glist[-1] != msg:
+                print(self.glist[-1])
+                print(msg)
+                self.glist.append(msg)
+        else:
+            self.glist.append(msg)
+
+    def Pose2D_callback(self, msg):
+        self.x_g = msg.x
+        self.y_g = msg.y
+        self.theta_g = msg.theta
+        #self.theta_g = wrapToPi(self.theta_g)
+        self.mode = Mode.POSE
 
     def stop_sign_detected_callback(self, msg):
         """ callback for when the detector has found a stop sign. Note that
@@ -152,7 +181,7 @@ class Supervisor:
     def close_to(self,x,y,theta):
         """ checks if the robot is at a pose within some threshold """
 
-        return (abs(x-self.x)<POS_EPS and abs(y-self.y)<POS_EPS and abs(theta-self.theta)<THETA_EPS)
+        return (abs(x-self.x)<POS_EPS and abs(y-self.y)<POS_EPS and abs(wrapToPi(theta)-wrapToPi(self.theta))<THETA_EPS)
 
     def init_stop_sign(self):
         """ initiates a stop sign maneuver """
@@ -162,6 +191,7 @@ class Supervisor:
 
     def has_stopped(self):
         """ checks if stop sign maneuver is over """
+
 
         return (self.mode == Mode.STOP and (rospy.get_rostime()-self.stop_sign_start)>rospy.Duration.from_sec(STOP_TIME))
 
@@ -180,7 +210,6 @@ class Supervisor:
         """ the main loop of the robot. At each iteration, depending on its
         mode (i.e. the finite state machine's state), if takes appropriate
         actions. This function shouldn't return anything """
-
         if not use_gazebo:
             try:
                 origin_frame = "/map" if mapping else "/odom"
@@ -189,6 +218,7 @@ class Supervisor:
                 self.y = translation[1]
                 euler = tf.transformations.euler_from_quaternion(rotation)
                 self.theta = euler[2]
+                #self.theta = wrapToPi(self.theta)
             except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException):
                 pass
 
@@ -196,11 +226,28 @@ class Supervisor:
         if not(self.last_mode_printed == self.mode):
             rospy.loginfo("Current Mode: %s", self.mode)
             self.last_mode_printed = self.mode
+            print("Current Mode: %s", self.mode)
 
         # checks wich mode it is in and acts accordingly
         if self.mode == Mode.IDLE:
             # send zero velocity
             self.stay_idle()
+            self.x_g = None
+            self.y_g =None
+            self.theta_g = None
+            self.nav_to_pose()
+            self.go_to_pose()
+            if len(self.glist) > 0:
+                goal = self.glist[-1]
+                del self.glist[-1]
+                self.x_g = goal.x
+                self.y_g = goal.y
+                #self.theta_g = wrapToPi(goal.theta)
+                print("self.x_g",self.x_g)
+                print("self.y_g",self.y_g)
+                print("self.th_g",self.theta_g)
+                self.mode = Mode.NAV
+
 
         elif self.mode == Mode.POSE:
             # moving towards a desired pose
@@ -224,20 +271,49 @@ class Supervisor:
                 self.nav_to_pose()
 
         elif self.mode == Mode.NAV:
+            print("self.th",self.theta)
             if self.close_to(self.x_g,self.y_g,self.theta_g):
                 self.mode = Mode.IDLE
             else:
                 self.nav_to_pose()
 
-        else:
+        
+
+
+
+	elif self.mode == Mode.IDLE_PROJ:
+            # send zero velocity
+            self.stay_idle()
+
+
+	elif self.mode == Mode.POSE_PROJ:
+            # moving towards a desired pose
+            if self.close_to(self.x_g,self.y_g,self.theta_g):
+                self.mode = Mode.IDLE_PROJ
+            else:
+                self.go_to_pose()
+
+
+	elif self.mode == Mode.NAV_PROJ:
+            if self.close_to(self.x_g,self.y_g,self.theta_g):
+                self.mode = Mode.IDLE_PROJ
+            else:
+                self.nav_to_pose()
+
+
+
+
+	else:
             raise Exception('This mode is not supported: %s'
                 % str(self.mode))
 
     def run(self):
+
         rate = rospy.Rate(10) # 10 Hz
         while not rospy.is_shutdown():
             self.loop()
             rate.sleep()
+
 
 if __name__ == '__main__':
     sup = Supervisor()
