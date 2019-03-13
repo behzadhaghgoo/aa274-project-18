@@ -38,7 +38,7 @@ class Mode(Enum):
     CROSS = 4
     NAV = 5
     MANUAL = 6
-
+    # Our modes
     IDLE_PROJ = 7
     POSE_PROJ  = 8
     NAV_PROJ = 9
@@ -100,7 +100,6 @@ class Supervisor:
         print("rviz command received!")
 
         try:
-            
             nav_pose_origin = self.trans_listener.transformPose(origin_frame, msg)
             self.x_g = nav_pose_origin.pose.position.x
             self.y_g = nav_pose_origin.pose.position.y
@@ -121,13 +120,14 @@ class Supervisor:
         self.y_g = msg.y
         self.theta_g = msg.theta
         self.mode = Mode.NAV
+	
     def delivery_callback(self, msg):
-	self.mode = Mode.NAV
-	pose = Pose2D()
-	pose.x = 1
-	pose.y = 1
-	pose.theta = 0
-	self.nav_pose_callback(pose)
+        self.mode = Mode.NAV
+        pose = Pose2D()
+        pose.x = 1
+        pose.y = 1
+        pose.theta = 0
+        self.nav_pose_callback(pose)
 
     def Pose2D_callback(self, msg):
 	rospy.loginfo("Current Mode: %s", self.mode)
@@ -135,7 +135,6 @@ class Supervisor:
         self.y_g = msg.y
         self.theta_g = msg.theta
         self.mode = Mode.POSE
-	print("\n\n\n\n\n\n mode set to pose\n\n\n\n\n\n\n\n\n\n")
 
     def stop_sign_detected_callback(self, msg):
         """ callback for when the detector has found a stop sign. Note that
@@ -148,58 +147,46 @@ class Supervisor:
         if dist > 0 and dist < STOP_MIN_DIST and self.mode == Mode.NAV:
             self.init_stop_sign()
 
+    def construct_Pose2D_msg(x,y,theta):
+        pose_msg = Pose2D()
+        pose_msg.x = self.x
+        pose_msg.y = self.y
+        pose_msg.theta = self.theta
+        return pose_msg
+
     def go_to_pose(self):
         """ sends the current desired pose to the pose controller """
-
-        pose_g_msg = Pose2D()
-        pose_g_msg.x = self.x_g
-        pose_g_msg.y = self.y_g
-        pose_g_msg.theta = self.theta_g
-
-        self.pose_goal_publisher.publish(pose_g_msg)
+        self.pose_goal_publisher.publish(construct_Pose2D_msg(self.x_g, self.y_g, self.theta_g))
 
     def nav_to_pose(self):
         """ sends the current desired pose to the naviagtor """
-
-        nav_g_msg = Pose2D()
-        nav_g_msg.x = self.x_g
-        nav_g_msg.y = self.y_g
-        nav_g_msg.theta = self.theta_g
-
-        self.nav_goal_publisher.publish(nav_g_msg)
+        self.nav_goal_publisher.publish(construct_Pose2D_msg(self.x_g, self.y_g, self.theta_g))
 
     def stay_idle(self):
         """ sends zero velocity to stay put """
-
         vel_g_msg = Twist()
         self.cmd_vel_publisher.publish(vel_g_msg)
 
     def close_to(self,x,y,theta):
         """ checks if the robot is at a pose within some threshold """
-
         return (abs(x-self.x)<POS_EPS and abs(y-self.y)<POS_EPS and abs(theta-self.theta)<THETA_EPS)
 
     def init_stop_sign(self):
         """ initiates a stop sign maneuver """
-
         self.stop_sign_start = rospy.get_rostime()
         self.mode = Mode.STOP
 
     def has_stopped(self):
         """ checks if stop sign maneuver is over """
-
-
         return (self.mode == Mode.STOP and (rospy.get_rostime()-self.stop_sign_start)>rospy.Duration.from_sec(STOP_TIME))
 
     def init_crossing(self):
         """ initiates an intersection crossing maneuver """
-
         self.cross_start = rospy.get_rostime()
         self.mode = Mode.CROSS
 
     def has_crossed(self):
         """ checks if crossing maneuver is over """
-
         return (self.mode == Mode.CROSS and (rospy.get_rostime()-self.cross_start)>rospy.Duration.from_sec(CROSSING_TIME))
 
     def loop(self):
@@ -256,35 +243,27 @@ class Supervisor:
             else:
                 self.nav_to_pose()
 
-        
 
+        elif self.mode == Mode.IDLE_PROJ:
+                # send zero velocity
+                self.stay_idle()
 
+        elif self.mode == Mode.POSE_PROJ:
+                # moving towards a desired pose
+                if self.close_to(self.x_g,self.y_g,self.theta_g):
+                    self.mode = Mode.IDLE_PROJ
+                else:
+                    self.go_to_pose()
 
-	elif self.mode == Mode.IDLE_PROJ:
-            # send zero velocity
-            self.stay_idle()
+        elif self.mode == Mode.NAV_PROJ:
+                if self.close_to(self.x_g,self.y_g,self.theta_g):
+                    self.mode = Mode.IDLE_PROJ
+                else:
+                    self.nav_to_pose()
 
-
-	elif self.mode == Mode.POSE_PROJ:
-            # moving towards a desired pose
-            if self.close_to(self.x_g,self.y_g,self.theta_g):
-                self.mode = Mode.IDLE_PROJ
-            else:
-                self.go_to_pose()
-
-
-	elif self.mode == Mode.NAV_PROJ:
-            if self.close_to(self.x_g,self.y_g,self.theta_g):
-                self.mode = Mode.IDLE_PROJ
-            else:
-                self.nav_to_pose()
-
-
-
-
-	else:
-            raise Exception('This mode is not supported: %s'
-                % str(self.mode))
+        else:
+                raise Exception('This mode is not supported: %s'
+                    % str(self.mode))
 
     def run(self):
 
