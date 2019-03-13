@@ -95,6 +95,7 @@ class Navigator:
         self.x_g = data.x
         self.y_g = data.y
         self.theta_g = data.theta
+	
         self.run_navigator()
 
     def map_md_callback(self, msg):
@@ -141,7 +142,8 @@ class Navigator:
         except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException):
             self.current_plan = []
             return
-
+        if self.x_g == None:
+            return 
         # makes sure we have a map
         if not self.occupancy:
             self.current_plan = []
