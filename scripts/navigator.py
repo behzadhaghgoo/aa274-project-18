@@ -84,6 +84,7 @@ class Navigator:
         self.nav_pose_pub = rospy.Publisher('/cmd_pose', Pose2D, queue_size=10)
         self.nav_pathsp_pub = rospy.Publisher('/cmd_path_sp', PoseStamped, queue_size=10)
         self.nav_vel_pub = rospy.Publisher('/cmd_vel', Twist, queue_size=10)
+        self.no_path = rospy.Publisher('/no_path',String, queue_size=10)
 
         self.trans_listener = tf.TransformListener()
 
@@ -131,7 +132,7 @@ class Navigator:
 
     def run_navigator(self):
         """ computes a path from current state to goal state using A* and sends it to the path controller """
-
+        print(1)
         # makes sure we have a location
         try:
             (translation,rotation) = self.trans_listener.lookupTransform('/map', '/base_footprint', rospy.Time(0))
@@ -142,11 +143,15 @@ class Navigator:
         except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException):
             self.current_plan = []
             return
-        if self.x_g == None:
+	print(self.x_g)
+        if (self.x_g == 2000.0 and self.y_g == 2000.0):
+            print(2)
             return 
         # makes sure we have a map
         if not self.occupancy:
             self.current_plan = []
+            self.no_path.publish("F")
+            print(3)
             return
 
         # if close to the goal, use the pose_controller instead
@@ -159,6 +164,7 @@ class Navigator:
             self.nav_pose_pub.publish(pose_g_msg)
             self.current_plan = []
             self.V_prev = 0
+            print(4)
             return
 
         # if there is no plan, we are far from the start of the plan,
@@ -171,7 +177,7 @@ class Navigator:
             x_init = self.snap_to_grid((self.x, self.y))
             x_goal = self.snap_to_grid((self.x_g, self.y_g))
             problem = AStar(state_min,state_max,x_init,x_goal,self.occupancy,self.plan_resolution)
-
+            print(5)
             rospy.loginfo("Navigator: Computing navigation plan")
             if problem.solve():
                 if len(problem.path) > 3:
@@ -192,7 +198,7 @@ class Navigator:
                         pose_st.header.frame_id = 'map'
                         path_msg.poses.append(pose_st)
                     self.nav_path_pub.publish(path_msg)
-
+                    print(6)
                     path_t = [0]
                     path_x = [self.current_plan[0][0]]
                     path_y = [self.current_plan[0][1]]
@@ -217,8 +223,12 @@ class Navigator:
                     # plt.show()
                 else:
                     rospy.logwarn("Navigator: Path too short, not updating")
+                    print(7)
             else:
                 rospy.logwarn("Navigator: Could not find path")
+                if(len(self.current_plan)==0):
+                    self.no_path.publish("F")
+                    print(8)
                 self.current_plan = []
 
         # if we have a path, execute it (we need at least 3 points for this controller)
@@ -282,6 +292,7 @@ class Navigator:
             # using the pose controller for paths too short
             # just send the next point
             pose_g_msg = Pose2D()
+            print(10)
             pose_g_msg.x = self.current_plan[0][0]
             pose_g_msg.y = self.current_plan[0][1]
             if len(self.current_plan)>1:
@@ -289,10 +300,12 @@ class Navigator:
             else:
                 pose_g_msg.theta = self.theta_g
             self.nav_pose_pub.publish(pose_g_msg)
+            print(9)
             return
         else:
             # just stop
             cmd_x_dot = 0
+            print(11)
             cmd_theta_dot = 0
 
         # saving the last velocity for the controller

@@ -96,7 +96,8 @@ class PoseController:
     def get_ctrl_output(self):
         if self.x_g is None:
             return None
-
+        if self.x_g == 2000.0 and self.y_g == 2000.0 and self.theta_g == 0:
+            return None
         """ runs a simple feedback pose controller """
         if (rospy.get_rostime().to_sec()-self.cmd_pose_time.to_sec()) < TIMEOUT:
             # if you are not using gazebo, your need to use a TF look-up to find robot's states

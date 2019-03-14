@@ -20,7 +20,7 @@ mapping = rospy.get_param("map")
 
 # threshold at which we consider the robot at a location
 POS_EPS = .1
-THETA_EPS = 1
+THETA_EPS = .3
 
 # time to stop at a stop sign
 STOP_TIME = 3
@@ -74,12 +74,18 @@ class Supervisor:
         rospy.Subscriber('/NavRequest', Pose2D, self.delivery_callback)
         # high-level navigation pose
         rospy.Subscriber('/nav_pose', Pose2D, self.Pose2D_callback)
+        rospy.Subscriber('/no_path', String, self.no_callback)
         # if using gazebo, we have access to perfect state
         if use_gazebo:
             rospy.Subscriber('/gazebo/model_states', ModelStates, self.gazebo_callback)
         # we can subscribe to nav goal click
         rospy.Subscriber('/move_base_simple/goal', PoseStamped, self.rviz_goal_callback)
         
+    def no_callback(self,msg):
+        print("hello")
+        if self.mode != Mode.IDLE:
+            self.mode = Mode.IDLE
+        print('Done')
     def gazebo_callback(self, msg):
         pose = msg.pose[msg.name.index("turtlebot3_burger")]
         twist = msg.twist[msg.name.index("turtlebot3_burger")]
@@ -127,7 +133,7 @@ class Supervisor:
     def delivery_callback(self, msg):
         print(len(self.glist))
         if len(self.glist) > 0:
-            if self.glist[-1] != msg:
+            if msg not in self.glist:
                 print(self.glist[-1])
                 print(msg)
                 self.glist.append(msg)
@@ -232,9 +238,9 @@ class Supervisor:
         if self.mode == Mode.IDLE:
             # send zero velocity
             self.stay_idle()
-            self.x_g = None
-            self.y_g =None
-            self.theta_g = None
+            self.x_g = 2000.0
+            self.y_g = 2000.0
+            self.theta_g = 0
             self.nav_to_pose()
             self.go_to_pose()
             if len(self.glist) > 0:
